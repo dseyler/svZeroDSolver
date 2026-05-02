@@ -34,12 +34,16 @@ def run_simulation(
         Exception: If parameter update or simulation fails.
     """
     param_names = [p["name"] for p in parameters]
-    for name, value in zip(param_names, param_values):
+    for param_cfg, value in zip(parameters, param_values):
+        name = param_cfg["name"]
         if isinstance(value, np.ndarray):
             value = float(value.item())
         elif not isinstance(value, (int, float)):
             value = float(value)
         param_handler.set_parameter(name, value)
+        # Mirror value to any linked parameters
+        for linked_name in param_cfg.get("linked_parameters", []):
+            param_handler.set_parameter(linked_name, value)
 
     config_dict = param_handler.get_config()
     solver = pysvzerod.Solver(config_dict)

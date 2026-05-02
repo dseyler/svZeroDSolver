@@ -6,6 +6,9 @@ import numpy as np
 from typing import Dict, List, Optional, Union, Tuple
 from scipy.interpolate import interp1d
 
+# Per-point normalization can be a scalar float or a per-point ndarray (e.g. σ values).
+_Normalization = Optional[Union[float, np.ndarray]]
+
 
 def _parse_percent(x) -> Optional[float]:
     """Parse percent: 5, '5%' -> 0.05. Returns None if not a percent form."""
@@ -45,6 +48,13 @@ def _compute_range(target: Dict) -> Tuple[np.ndarray, np.ndarray]:
             lo_val, hi_val = float(target['target_range'][0]), float(target['target_range'][1])
             return (np.full(len(t), lo_val), np.full(len(t), hi_val))
 
+        # sigma_bounds: per-point ±k·σ band (requires std_values loaded from CSV)
+        sigma_bounds = target.get('sigma_bounds')
+        if sigma_bounds is not None and 'std_values' in target:
+            k = float(sigma_bounds)
+            std = np.asarray(target['std_values'], dtype=float)
+            return _ordered_bounds(t - k * std, t + k * std)
+
         # Relative bounds are provided as percent or [min, max]
         if relative_bounds is not None:
             pct = _parse_percent(relative_bounds)
@@ -53,7 +63,7 @@ def _compute_range(target: Dict) -> Tuple[np.ndarray, np.ndarray]:
             if isinstance(relative_bounds, (list, tuple)) and len(relative_bounds) == 2:
                 lo_val, hi_val = float(relative_bounds[0]), float(relative_bounds[1])
                 return (np.full(len(t), lo_val), np.full(len(t), hi_val))
-        
+
         # No target_range or relative_bounds, so point target
         return (t.copy(), t.copy())  # point target
     else:
@@ -100,10 +110,51 @@ def _interpolate_to_target_times(
     return interp_func(target_times)
 
 
+def _resolve_normalization(target: Dict) -> Optional[float]:
+    """
+    Resolve a target's optional `normalization` field into a positive scalar
+    used to divide residuals (instead of the per-point midpoint).
+
+    Accepted values:
+      - None / missing  -> None (use per-point midpoint, original behavior)
+      - 'peak'          -> max(|target_values|) for time series, |target_value| for scalars
+      - 'mean'          -> mean(|target_values|) for time series, |target_value| for scalars
+      - 'std'           -> per-point σ array from 'std' column in target_file CSV
+      - numeric         -> the supplied positive constant
+
+    Returns None when no override is requested, a float scalar for peak/mean/numeric,
+    or an ndarray for 'std'.
+    """
+    spec = target.get('normalization')
+    if spec is None:
+        return None
+    if isinstance(spec, str):
+        s = spec.strip().lower()
+        if s == 'std':
+            if 'std_values' not in target:
+                raise ValueError(
+                    "normalization: std requires a 'std' column in the target_file CSV"
+                )
+            return np.asarray(target['std_values'], dtype=float)
+        if 'target_values' in target:
+            vals = np.abs(np.asarray(target['target_values'], dtype=float))
+        else:
+            vals = np.abs(np.asarray([float(target.get('target_value', 0.0))]))
+        if s == 'peak':
+            return float(np.max(vals))
+        if s == 'mean':
+            return float(np.mean(vals))
+        raise ValueError(
+            f"normalization must be 'peak', 'mean', 'std', or a positive number; got {spec!r}"
+        )
+    return float(spec)
+
+
 def _rel_errors_outside_range(
     sim_values: np.ndarray,
     lo: np.ndarray,
     hi: np.ndarray,
+    normalization: "_Normalization" = None,
 ) -> np.ndarray:
     """
     Relative errors for values outside the target range [lo, hi].
@@ -114,8 +165,9 @@ def _rel_errors_outside_range(
     - if below lo: residual = lo - sim_value
     - if above hi: residual = sim_value - hi
 
-    Residuals are then normalized by the midpoint.
-    Returns: array of |residual_n| / |midpoint_n| per point, where midpoint_n = (lo_n + hi_n) / 2.
+    If `normalization` is provided, residuals are divided by this constant.
+    Otherwise, residuals are normalized by the per-point midpoint.
+    Returns: array of |residual_n| / denom per point.
     """
     sim_values = np.asarray(sim_values)
     lo = np.asarray(lo)
@@ -126,6 +178,13 @@ def _rel_errors_outside_range(
     residual[below] = lo[below] - sim_values[below]
     residual[above] = sim_values[above] - hi[above]
     abs_residual = np.abs(residual)
+    if normalization is not None:
+        norm_arr = np.asarray(normalization, dtype=float)
+        if norm_arr.ndim == 0:
+            denom = max(float(np.abs(norm_arr)), 1e-14)
+        else:
+            denom = np.maximum(np.abs(norm_arr), 1e-14)
+        return abs_residual / denom
     midpoint = (lo + hi) / 2.0
     abs_midpoint = np.maximum(np.abs(midpoint), 1e-14)
     return abs_residual / abs_midpoint
@@ -173,6 +232,8 @@ class ObjectiveFunction:
                     raise ValueError(f"target_file must have 'time' and 'value' columns: {target['target_file']}")
                 target['target_times'] = df['time'].values
                 target['target_values'] = df['value'].values
+                if 'std' in df.columns:
+                    target['std_values'] = df['std'].values
             elif 'target_value' in target:
                 target['target_value'] = float(target['target_value'])
             elif 'target_range' not in target:
@@ -180,6 +241,7 @@ class ObjectiveFunction:
             lo, hi = _compute_range(target)
             target['range_lo'] = lo
             target['range_hi'] = hi
+            target['_normalization'] = _resolve_normalization(target)
 
     def _get_simulated_value(
         self,
@@ -223,14 +285,16 @@ class ObjectiveFunction:
             return np.array([1e10])
 
         return _rel_errors_outside_range(
-            sim_interp, target['range_lo'], target['range_hi']
+            sim_interp, target['range_lo'], target['range_hi'],
+            normalization=target.get('_normalization'),
         )
 
     def _errors_for_scalar(self, target: Dict, sim_value: np.ndarray) -> np.ndarray:
         """Return array of one relative error for a scalar target."""
         sim_scalar = float(sim_value.item() if sim_value.size == 1 else sim_value.flat[0])
         return _rel_errors_outside_range(
-            np.array([sim_scalar]), target['range_lo'], target['range_hi']
+            np.array([sim_scalar]), target['range_lo'], target['range_hi'],
+            normalization=target.get('_normalization'),
         )
 
     def compute(self, simulated_values: Dict[str, Union[np.ndarray, float]]) -> float:

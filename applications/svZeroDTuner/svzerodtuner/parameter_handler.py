@@ -64,6 +64,8 @@ class ParameterHandler:
                 if chamber.get('name') == block_name:
                     if 'values' in chamber and param_key in chamber['values']:
                         return chamber['values'][param_key], ['chambers', i, 'values', param_key]
+                    if 'activation_function' in chamber and param_key in chamber['activation_function']:
+                        return chamber['activation_function'][param_key], ['chambers', i, 'activation_function', param_key]
         
         # Try vessels
         if 'vessels' in self.config:
