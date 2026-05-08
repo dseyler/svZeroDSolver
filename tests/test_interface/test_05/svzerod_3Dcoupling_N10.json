@@ -1,0 +1,51 @@
+{
+  "_comment": "Same as N5 fixture but with number_of_time_pts=10 (9 internal steps per external step). Even more aggressive multi-step regime to exercise the forward-sensitivity recursion.",
+  "simulation_parameters": {
+    "coupled_simulation": true,
+    "number_of_time_pts": 10,
+    "output_all_cycles": true,
+    "steady_initial": false,
+    "absolute_tolerance": 1e-12,
+    "maximum_nonlinear_iterations": 30
+  },
+  "boundary_conditions": [
+    {
+      "bc_name": "BC_outlet",
+      "bc_type": "PRESSURE",
+      "bc_values": {
+        "P": [0.0, 0.0],
+        "t": [0.0, 1.0]
+      }
+    }
+  ],
+  "external_solver_coupling_blocks": [
+    {
+      "name": "FLOW_inlet",
+      "type": "FLOW",
+      "location": "inlet",
+      "connected_block": "vessel0",
+      "values": {
+        "Q": [1.0, 1.0],
+        "t": [0.0, 1.0]
+      }
+    }
+  ],
+  "junctions": [],
+  "vessels": [
+    {
+      "boundary_conditions": {
+        "outlet": "BC_outlet"
+      },
+      "vessel_id": 0,
+      "vessel_length": 10.0,
+      "vessel_name": "vessel0",
+      "zero_d_element_type": "BloodVesselCRL",
+      "zero_d_element_values": {
+        "R_poiseuille": 100.0,
+        "C": 1.0e-3,
+        "L": 0.5,
+        "stenosis_coefficient": 0.0
+      }
+    }
+  ]
+}

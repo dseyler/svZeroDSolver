@@ -142,7 +142,20 @@ class PiecewiseValve : public Block {
    */
   void update_solution(SparseSystem& system, std::vector<double>& parameters,
                        const Eigen::Matrix<double, Eigen::Dynamic, 1>& y,
-                       const Eigen::Matrix<double, Eigen::Dynamic, 1>& dy);
+                       const Eigen::Matrix<double, Eigen::Dynamic, 1>& dy) override;
+
+  /**
+   * @brief Per-step hook: when model->freeze_piecewise_valve_state is
+   * true, evaluate the open/closed predicate from the previous step's
+   * converged y_old and cache R for use across all Newton iters of the
+   * upcoming step. No-op when the flag is false.
+   *
+   * @param y_old Previous step's converged solution vector
+   * @param ydot_old Previous step's converged time-derivative vector
+   */
+  void prepare_step(
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old) override;
 
   /**
    * @brief Number of triplets of element
@@ -151,6 +164,12 @@ class PiecewiseValve : public Block {
    * (relevant for sparse memory reservation)
    */
   TripletsContributions num_triplets{5, 0, 3};
+
+ private:
+  /// Resistance frozen at start of step when
+  /// model->freeze_piecewise_valve_state is true. Unused when the flag
+  /// is false (update_solution falls through to the per-iter evaluation).
+  double R_cached{0.0};
 };
 
 #endif  // SVZERODSOLVER_MODEL_PiecewiseValve_HPP_

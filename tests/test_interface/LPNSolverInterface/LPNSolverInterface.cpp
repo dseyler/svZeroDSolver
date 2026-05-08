@@ -19,6 +19,7 @@ LPNSolverInterface::LPNSolverInterface() {
   lpn_return_ydot_name_ = "return_ydot";
   lpn_return_y_name_ = "return_y";
   lpn_set_external_step_size_name_ = "set_external_step_size";
+  lpn_get_coupling_jacobian_name_ = "get_coupling_jacobian";
 }
 
 LPNSolverInterface::~LPNSolverInterface() { dlclose(library_handle_); }
@@ -127,6 +128,17 @@ void LPNSolverInterface::load_library(const std::string& interface_lib) {
   if (!lpn_set_external_step_size_) {
     std::cerr
         << "Error loading function 'lpn_set_external_step_size' with error: "
+        << dlerror() << std::endl;
+    dlclose(library_handle_);
+    return;
+  }
+
+  // Get a pointer to the svzero 'get_coupling_jacobian' function.
+  *(void**)(&lpn_get_coupling_jacobian_) =
+      dlsym(library_handle_, "get_coupling_jacobian");
+  if (!lpn_get_coupling_jacobian_) {
+    std::cerr
+        << "Error loading function 'get_coupling_jacobian' with error: "
         << dlerror() << std::endl;
     dlclose(library_handle_);
     return;
@@ -262,4 +274,20 @@ void LPNSolverInterface::return_y(std::vector<double>& y) {
 //
 void LPNSolverInterface::return_ydot(std::vector<double>& ydot) {
   lpn_return_ydot_(problem_id_, ydot);
+}
+
+// Read the analytical coupling Jacobian dP/dQ for an
+// external_solver_coupling_block. Mirrors the FD probe in svMultiPhysics'
+// set_bc.cpp:calc_der_cpl_bc; must be called after a converged
+// run_simulation/increment_time.
+//
+// Parameters:
+//
+//   block_name: The name of the external_solver_coupling_block.
+//
+//   dP_dQ: Output scalar dP/dQ at the coupled face.
+//
+void LPNSolverInterface::get_coupling_jacobian(std::string block_name,
+                                               double& dP_dQ) {
+  lpn_get_coupling_jacobian_(problem_id_, block_name, dP_dQ);
 }

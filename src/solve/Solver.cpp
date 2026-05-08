@@ -28,6 +28,10 @@ Solver::Solver(const nlohmann::json& config) {
   } else {
     this->model->cardiac_cycle_period = simparams.sim_cardiac_period;
   }
+  // Propagate the operator-split valve flag from sim params to model.
+  this->model->freeze_piecewise_valve_state =
+      simparams.sim_freeze_piecewise_valve_state;
+
   DEBUG_MSG("Load initial condition");
   initial_state = load_initial_condition(config, *this->model.get());
 
@@ -70,6 +74,7 @@ void Solver::setup_initial() {
                                  simparams.sim_nliter);
 
     for (int i = 0; i < 31; i++) {
+      this->model->prepare_step(state.y, state.ydot);
       state = integrator_steady.step(state, time_step_size_steady * double(i));
     }
 
@@ -141,6 +146,7 @@ void Solver::run_integration() {
       }
     }
 
+    this->model->prepare_step(state.y, state.ydot);
     state = integrator.step(state, time);
 
     if (simparams.use_cycle_to_cycle_error &&
@@ -180,6 +186,7 @@ void Solver::run_integration() {
 
         last_two_cycles_time_pt_counter = simparams.sim_pts_per_cycle;
         for (size_t i = 1; i < simparams.sim_pts_per_cycle; i++) {
+          this->model->prepare_step(state.y, state.ydot);
           state = integrator.step(state, time);
 
           states_last_two_cycles[last_two_cycles_time_pt_counter] = state;

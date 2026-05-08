@@ -65,6 +65,12 @@ class SparseSystem {
           new Eigen::SparseLU<Eigen::SparseMatrix<double>>());  ///< Linear
                                                                 ///< solver
 
+  /// True iff solver has been factorize()'d at least once. Set by solve();
+  /// checked by Integrator::get_dP_dQ before back-solving (Eigen's
+  /// SparseLU::info() returns Success after analyzePattern alone, so it
+  /// cannot be used to detect "factorize never called" → solve segfault).
+  bool has_factorized = false;
+
   /**
    * @brief Reserve memory in system matrices based on number of triplets
    *

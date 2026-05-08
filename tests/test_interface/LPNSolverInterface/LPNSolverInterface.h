@@ -81,6 +81,7 @@ class LPNSolverInterface {
   void return_y(std::vector<double>& y);
   void return_ydot(std::vector<double>& ydot);
   void set_external_step_size(double step_size);
+  void get_coupling_jacobian(std::string block_name, double& dP_dQ);
 
   // Interface functions.
   std::string lpn_initialize_name_;
@@ -121,6 +122,9 @@ class LPNSolverInterface {
 
   std::string lpn_set_external_step_size_name_;
   void (*lpn_set_external_step_size_)(const int, double);
+
+  std::string lpn_get_coupling_jacobian_name_;
+  void (*lpn_get_coupling_jacobian_)(const int, std::string, double&);
 
   dl_handle_t library_handle_ = nullptr;
   int problem_id_ = 0;

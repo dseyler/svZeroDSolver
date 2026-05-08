@@ -57,6 +57,13 @@ struct SimulationParameters {
   int output_interval{0};     ///< Interval of writing output
 
   bool sim_steady_initial{0};  ///< Start from steady solution
+  bool sim_freeze_piecewise_valve_state{
+      false};  ///< Operator-split PiecewiseValve resistance: evaluate the
+               ///< open/closed predicate ONCE at the start of each timestep
+               ///< from the previous converged y, hold R constant across
+               ///< all Newton iterations of that step. Mirrors the genBC
+               ///< type="I" frozen-valve pattern. Default false (preserves
+               ///< the existing per-Newton-iter evaluation).
   bool output_variable_based{
       false};  ///< Output variable based instead of vessel based
   bool output_mean_only{false};   ///< Output only the mean value

@@ -61,6 +61,10 @@ void Block::update_solution(
 
 void Block::post_solve(Eigen::Matrix<double, Eigen::Dynamic, 1>& y) {}
 
+void Block::prepare_step(
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old) {}
+
 void Block::update_gradient(Eigen::SparseMatrix<double>& jacobian,
                             Eigen::Matrix<double, Eigen::Dynamic, 1>& residual,
                             Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,

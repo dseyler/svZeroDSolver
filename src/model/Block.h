@@ -252,6 +252,23 @@ class Block {
   virtual void post_solve(Eigen::Matrix<double, Eigen::Dynamic, 1>& y);
 
   /**
+   * @brief Per-step hook fired ONCE before the Newton loop, after
+   * update_time. Receives the previous step's converged state plus the
+   * upcoming step size so blocks can build a predictor (e.g. midpoint
+   * extrapolation y_pred = y_old + 0.5 * dt * ydot_old) for any state
+   * they need to freeze across the Newton iterations. Default impl is a
+   * no-op; blocks override when they need start-of-step state (e.g.
+   * PiecewiseValve operator-split resistance evaluated at a midpoint
+   * predictor of (p_in, p_out)).
+   *
+   * @param y_old Previous step's converged solution vector
+   * @param ydot_old Previous step's converged time-derivative vector
+   */
+  virtual void prepare_step(
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old);
+
+  /**
    * @brief Set the gradient of the block contributions with respect to the
    * parameters
    *

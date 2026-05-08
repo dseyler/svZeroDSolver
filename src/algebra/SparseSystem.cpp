@@ -78,6 +78,7 @@ void SparseSystem::solve() {
         "System is singular. Check your model (connections, boundary "
         "conditions, parameters).");
   }
+  has_factorized = true;
   dydot.setZero();
   dydot += solver->solve(residual);
 }

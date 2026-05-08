@@ -5,6 +5,7 @@
 
 #include <cmath>
 
+#include "BlockType.h"
 #include "SimulationParameters.h"
 
 // Static member data.
@@ -57,6 +58,9 @@ extern "C" void update_state(int problem_id, std::vector<double> new_state_y,
 
 extern "C" void return_y(int problem_id, std::vector<double>& ydot);
 
+extern "C" void get_coupling_jacobian(int problem_id, std::string block_name,
+                                      double& dP_dQ);
+
 extern "C" void return_ydot(int problem_id, std::vector<double>& ydot);
 
 /**
@@ -91,6 +95,11 @@ void initialize(std::string input_file_arg, int& problem_id, int& pts_per_cycle,
   auto model = std::shared_ptr<Model>(new Model());
 
   load_simulation_model(config, *model.get());
+
+  // Propagate the operator-split valve flag from sim params to model.
+  model->freeze_piecewise_valve_state =
+      simparams.sim_freeze_piecewise_valve_state;
+
   auto state = load_initial_condition(config, *model.get());
 
   // Check that steady initial is not set when ClosedLoopHeartAndPulmonary is
@@ -172,6 +181,11 @@ void initialize(std::string input_file_arg, int& problem_id, int& pts_per_cycle,
         interface->absolute_tolerance_, interface->max_nliter_);
 
     for (size_t i = 0; i < 31; i++) {
+      // Per-pseudo-step prepare (steady spinup): refresh per-block caches.
+      // This preserves the legacy per-step semantics for the spinup loop;
+      // the production-time semantics (one prepare per external timestep)
+      // applies to run_simulation/increment_time only.
+      model_steady->prepare_step(state.y, state.ydot);
       state = integrator_steady.step(state, time_step_size_steady * double(i));
     }
     model_steady->to_unsteady();
@@ -389,6 +403,56 @@ void update_state(int problem_id, std::vector<double> new_state_y,
 }
 
 /**
+ * @brief Return the analytical coupling Jacobian dP/dQ for a coupled
+ * external_solver_coupling_block (FlowReferenceBC). Replaces the FD
+ * perturbation probe in svMultiPhysics' set_bc.cpp:calc_der_cpl_bc.
+ * Must be called after a converged run_simulation/increment_time so the
+ * SparseLU factorization left in SparseSystem is current.
+ *
+ * @param problem_id The ID used to identify the 0D problem.
+ * @param block_name Name of the external_solver_coupling_block (e.g. "LV_3D").
+ * @param dP_dQ OUT: scalar derivative of the coupled pressure DOF wrt
+ * the externally-prescribed flow DOF.
+ */
+void get_coupling_jacobian(int problem_id, std::string block_name,
+                           double& dP_dQ) {
+  auto interface = SolverInterface::interface_list_[problem_id];
+  auto model = interface->model_;
+  auto block = model->get_block(block_name);
+  // The external_solver_coupling_block is a FlowReferenceBC with exactly
+  // one connected node total, on either the inlet side (location=outlet
+  // in the JSON) or the outlet side (location=inlet). Pick whichever is
+  // populated; throw if both are empty (misconfigured) or both populated
+  // (unexpected topology).
+  Node* node = nullptr;
+  if (!block->inlet_nodes.empty() && block->outlet_nodes.empty()) {
+    node = block->inlet_nodes[0];
+  } else if (block->inlet_nodes.empty() && !block->outlet_nodes.empty()) {
+    node = block->outlet_nodes[0];
+  } else {
+    throw std::runtime_error(
+        "ERROR: coupling block '" + block_name +
+        "' has unexpected node topology in get_coupling_jacobian() "
+        "(expected exactly one connected node).");
+  }
+  // Pass the FlowReferenceBC's equation row index (where ∂C/∂Q_input has
+  // its single nonzero entry, per FlowReferenceBC.cpp:16) as the "q_dof"
+  // arg. This is the correct RHS row for the sensitivity solve
+  // J·w = e_{eqn} — NOT the flow variable's column index. The two happen
+  // to coincide in some simple LPNs (test_04) by DOFHandler registration
+  // ordering, but in general they differ; using flow_dof gave wildly
+  // wrong dP/dQ for the cardiac closed-loop topology (off by 13 orders
+  // of magnitude vs FD probe).
+  if (block->global_eqn_ids.empty()) {
+    throw std::runtime_error(
+        "ERROR: coupling block '" + block_name +
+        "' has no equation rows in get_coupling_jacobian().");
+  }
+  const int eqn_row = block->global_eqn_ids[0];
+  dP_dQ = interface->integrator_.get_dP_dQ(node->pres_dof, eqn_row);
+}
+
+/**
  * @brief Increment the 0D solution by one time step.
  *
  * @param problem_id The ID used to identify the 0D problem.
@@ -406,6 +470,10 @@ void increment_time(int problem_id, const double external_time,
   Integrator integrator(model.get(), time_step_size, interface->rho_infty_,
                         absolute_tolerance, max_nliter);
   auto state = interface->state_;
+  // External-step boundary: refresh per-block per-step caches (e.g.
+  // PiecewiseValve R_cached) from the canonical state at the start of this
+  // external step. See note in Integrator::step.
+  model->prepare_step(state.y, state.ydot);
   interface->state_ = integrator.step(state, external_time);
   interface->time_step_ += 1;
 
@@ -439,14 +507,58 @@ void run_simulation(int problem_id, const double external_time,
   auto system_size = interface->system_size_;
   auto num_output_steps = interface->num_output_steps_;
 
-  auto integrator = interface->integrator_;
+  // NOTE: must be a reference, not a copy, so that updates to integrator
+  // state (y_coeff via update_params, the LU factorization in
+  // system.solver, internal counters) are visible to subsequent interface
+  // queries like get_coupling_jacobian. The previous `auto integrator =
+  // ...` copy left the per-step factorization on a temporary that died at
+  // function exit AND left interface->integrator_.y_coeff stale, which
+  // silently broke any post-run access to integrator state.
+  auto& integrator = interface->integrator_;
   integrator.update_params(time_step_size);
+
+  // Auto-arm forward-sensitivity tracking for every FlowReferenceBC in the
+  // model. For each tracked Q dof, the Integrator propagates dy/dQ through
+  // all internal steps so get_coupling_jacobian/get_dP_dQ returns the
+  // correct multi-step accumulated dP/dQ — not just the last internal
+  // step's contribution. This makes the analytical-Jacobian coupling path
+  // exact for any number_of_time_pts ≥ 2 (the legacy single-step formula
+  // is only correct at N == 2). Cost per step: one extra LU back-solve
+  // per FlowReferenceBC, against the same factorization the Newton solve
+  // just used (Eigen::SparseLU::solve, ~µs for typical LPN sizes).
+  // Track the EQUATION ROW of each FlowReferenceBC (where ∂C/∂Q_input has
+  // its single nonzero, per FlowReferenceBC.cpp:16), not the flow variable
+  // column index. These are independent IDs in the DOFHandler — the
+  // legacy code conflated them, which works for trivial LPNs by
+  // registration-order coincidence but produces wildly wrong dP/dQ for
+  // closed-loop cardiac topologies.
+  std::vector<int> coupled_eqn_rows;
+  for (auto& blk_ptr : model->get_blocks()) {
+    if (!blk_ptr) continue;
+    if (blk_ptr->block_type != BlockType::flow_bc) continue;
+    if (blk_ptr->global_eqn_ids.empty()) continue;
+    coupled_eqn_rows.push_back(blk_ptr->global_eqn_ids[0]);
+  }
+  // External step duration: in the run_simulation loop below, time advances
+  // by time_step_size per iteration, total (num_time_steps - 1) iterations.
+  const double external_dt = (num_time_steps - 1) * time_step_size;
+  integrator.arm_sensitivity(coupled_eqn_rows, external_dt, external_time);
 
   auto state = interface->state_;
   double time = external_time;
 
   interface->times_[0] = time;
   interface->states_[0] = state;
+
+  // External-step boundary: refresh per-block per-step caches (e.g.
+  // PiecewiseValve R_cached) from the canonical state at the start of this
+  // external step. Note that run_simulation may be called multiple times per
+  // external timestep by svMP (assembly + line-search trials) — each call
+  // re-prepares from the SAME state.y (interface->state_ is updated only by
+  // increment_time/update_state between external steps), so R_cached is
+  // consistent across all calls within the external step. See note in
+  // Integrator::step.
+  model->prepare_step(state.y, state.ydot);
 
   // Run integrator
   interface->time_step_ = 0;
