@@ -1,0 +1,76 @@
+{
+  "simulation_parameters": {
+    "coupled_simulation": true,
+    "number_of_time_pts": 50,
+    "output_all_cycles": true,
+    "steady_initial": false
+  },
+  "boundary_conditions": [
+    {
+      "bc_name": "OUTLET",
+      "bc_type": "RESISTANCE",
+      "bc_values": {
+        "Pd": 0.0,
+        "R": 100.0
+      }
+    }
+  ],
+  "external_solver_coupling_blocks": [
+    {
+      "name": "inflow_coupling",
+      "connected_block": "upstream_vessel",
+      "type": "FLOW",
+      "location": "inlet",
+      "periodic": false,
+      "values": {
+        "t": [
+          0.0,
+          1.0
+        ],
+        "Q": [
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "vessels": [
+    {
+      "vessel_id": 0,
+      "vessel_length": 10.0,
+      "vessel_name": "upstream_vessel",
+      "zero_d_element_type": "BloodVessel",
+      "zero_d_element_values": {
+        "C": 0.0001,
+        "R_poiseuille": 10.0
+      }
+    },
+    {
+      "boundary_conditions": {
+        "outlet": "OUTLET"
+      },
+      "vessel_id": 1,
+      "vessel_length": 10.0,
+      "vessel_name": "downstream_vessel",
+      "zero_d_element_type": "BloodVessel",
+      "zero_d_element_values": {
+        "C": 0.0001,
+        "R_poiseuille": 10.0
+      }
+    }
+  ],
+  "valves": [
+    {
+      "type": "PiecewiseValve",
+      "name": "valve",
+      "params": {
+        "Rmax": 100000.0,
+        "Rmin": 100.0,
+        "freeze_state": false,
+        "upstream_block": "upstream_vessel",
+        "downstream_block": "downstream_vessel"
+      }
+    }
+  ],
+  "junctions": []
+}
