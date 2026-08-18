@@ -84,6 +84,44 @@
  * * `2` upstream_block: Name of block connected upstream
  * * `3` downstream_block: Name of block connected downstream
  *
+ * ### Freezing the valve state
+ *
+ * By default \f$R\f$ is re-evaluated from the current Newton iterate at every
+ * nonlinear iteration. The valve state can therefore flip back and forth
+ * within a single step, which converges poorly near a valve-switching event
+ * and is especially problematic when this model is coupled to an external
+ * (e.g. 3D) solver, where \f$R\f$ can end up chasing the trial solution the
+ * external solver supplies partway through a step.
+ *
+ * Setting the optional boolean `freeze_state` to `true` decides the valve
+ * state once per driver step instead, from the state converged at the end of
+ * the previous driver step, and holds \f$R\f$ fixed for the whole step. A
+ * driver step is one time step in a standalone simulation, or one external
+ * step (spanning several internal time steps) when coupled to an external
+ * solver. This introduces an O(\f$\Delta t\f$) splitting error in exchange
+ * for a much better conditioned nonlinear solve. It defaults to `false`,
+ * which reproduces the per-iteration behavior exactly.
+ *
+ * ### Usage in json configuration file
+ *
+ *     "valves": [
+ *         {
+ *             "type": "PiecewiseValve",
+ *             "name": "valve",
+ *             "params": {
+ *                 "Rmax": 100000.0,
+ *                 "Rmin": 100.0,
+ *                 "freeze_state": false,
+ *                 "upstream_block": "upstream_vessel",
+ *                 "downstream_block": "downstream_vessel"
+ *             }
+ *         }
+ *     ]
+ *
+ * ### Internal variables
+ *
+ * This block has no internal variables.
+ *
  */
 class PiecewiseValve : public Block {
  public:
@@ -107,6 +145,11 @@ class PiecewiseValve : public Block {
       : Block(id, model, BlockType::piecewise_valve, BlockClass::valve,
               {{"Rmax", InputParameter()},
                {"Rmin", InputParameter()},
+               // Optional and non-numeric, so generate_block accepts the key
+               // but skips it: it adds no entry to global_param_ids and the
+               // ParamId values above are unaffected. It is read directly
+               // from the json in create_valves.
+               {"freeze_state", InputParameter(true, false, false)},
                {"upstream_block", InputParameter(false, false, false)},
                {"downstream_block", InputParameter(false, false, false)}}) {}
 
@@ -147,12 +190,41 @@ class PiecewiseValve : public Block {
       const Eigen::Matrix<double, Eigen::Dynamic, 1>& dy) override;
 
   /**
+   * @brief Decide the valve state for the upcoming driver step
+   *
+   * No-op unless freeze_state is set. Otherwise evaluates the valve state
+   * against the previous converged pressures and caches the resulting
+   * resistance, which update_solution then holds fixed for the whole step.
+   *
+   * @param y_old Converged solution at the end of the previous driver step
+   * @param ydot_old Converged time-derivative at the end of the previous
+   * driver step (unused)
+   */
+  void prepare_step(
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old) override;
+
+  /**
+   * @brief Hold the valve resistance constant over each driver step
+   *
+   * @param freeze Whether to freeze the valve state
+   */
+  void set_freeze_state(bool freeze) override;
+
+  /**
    * @brief Number of triplets of element
    *
    * Number of triplets that the element contributes to the global system
    * (relevant for sparse memory reservation)
    */
   TripletsContributions num_triplets{5, 0, 3};
+
+ private:
+  /// Hold the valve resistance constant over each driver step
+  bool freeze_state{false};
+
+  /// Valve resistance decided in prepare_step, used when freeze_state is set
+  double R_cached{0.0};
 };
 
 #endif  // SVZERODSOLVER_MODEL_PiecewiseValve_HPP_

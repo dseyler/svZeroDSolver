@@ -641,6 +641,13 @@ void create_valves(
     std::string valve_type = valve_config["type"];
     std::string valve_name = valve_config["name"];
     generate_block(model, valve_config["params"], valve_type, valve_name);
+
+    // freeze_state is non-numeric, so generate_block accepts the key but does
+    // not read it. Valve types that do not declare it reject it outright, and
+    // set_freeze_state is a no-op on blocks that do not implement it.
+    model.get_block(valve_name)->set_freeze_state(
+        valve_config["params"].value("freeze_state", false));
+
     connections.push_back(
         {valve_config["params"]["upstream_block"], valve_name});
     connections.push_back(
