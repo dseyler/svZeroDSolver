@@ -172,6 +172,7 @@ void initialize(std::string input_file_arg, int& problem_id, int& pts_per_cycle,
         interface->absolute_tolerance_, interface->max_nliter_);
 
     for (size_t i = 0; i < 31; i++) {
+      model_steady->prepare_step(state.y, state.ydot);
       state = integrator_steady.step(state, time_step_size_steady * double(i));
     }
     model_steady->to_unsteady();
@@ -406,6 +407,10 @@ void increment_time(int problem_id, const double external_time,
   Integrator integrator(model.get(), time_step_size, interface->rho_infty_,
                         absolute_tolerance, max_nliter);
   auto state = interface->state_;
+  // One call to increment_time is one external step, so the blocks are
+  // prepared once here, from the state converged at the end of the previous
+  // external step.
+  model->prepare_step(state.y, state.ydot);
   interface->state_ = integrator.step(state, external_time);
   interface->time_step_ += 1;
 
@@ -447,6 +452,15 @@ void run_simulation(int problem_id, const double external_time,
 
   interface->times_[0] = time;
   interface->states_[0] = state;
+
+  // Prepare the blocks for this external step. This is deliberately OUTSIDE
+  // the loop below: one call to run_simulation is a single external step of
+  // the coupled solver, advanced here by num_time_steps internal steps. State
+  // frozen by prepare_step must stay frozen for the whole external step, so
+  // that it cannot chase the trial solution supplied by the external solver
+  // partway through the step. Calling it per internal step instead would
+  // reintroduce exactly the coupling instability this hook exists to avoid.
+  model->prepare_step(state.y, state.ydot);
 
   // Run integrator
   interface->time_step_ = 0;

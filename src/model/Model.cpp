@@ -225,6 +225,14 @@ void Model::post_solve(Eigen::Matrix<double, Eigen::Dynamic, 1>& y) {
   }
 }
 
+void Model::prepare_step(
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old) {
+  for (auto block : blocks) {
+    block->prepare_step(y_old, ydot_old);
+  }
+}
+
 void Model::to_steady() {
   for (auto& param : parameters) {
     param.to_steady();

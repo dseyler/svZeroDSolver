@@ -253,6 +253,26 @@ class Block {
   virtual void post_solve(Eigen::Matrix<double, Eigen::Dynamic, 1>& y);
 
   /**
+   * @brief Prepare the block for the upcoming driver step
+   *
+   * Called once per driver step, before the Newton loop and before
+   * update_time, with the previous converged state. A driver step is one
+   * time step in a standalone simulation, or one external step (spanning
+   * several internal time steps) when coupled to an external solver.
+   *
+   * Blocks can use this to freeze state-dependent quantities for the
+   * duration of the step instead of re-evaluating them at every Newton
+   * iteration. Default no-op.
+   *
+   * @param y_old Converged solution at the end of the previous driver step
+   * @param ydot_old Converged time-derivative at the end of the previous
+   * driver step
+   */
+  virtual void prepare_step(
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+      const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old);
+
+  /**
    * @brief Set the gradient of the block contributions with respect to the
    * parameters
    *
@@ -309,6 +329,18 @@ class Block {
    */
   virtual void set_material(std::unique_ptr<SphereMaterial> m) {
     (void)m;  // Included to avoid unused parameter warning
+  }
+
+  /**
+   * @brief Freeze state-dependent quantities for the duration of a driver step
+   *
+   * Default no-op. Overridden by PiecewiseValve to hold its resistance
+   * constant across all Newton iterations of a driver step.
+   *
+   * @param freeze Whether to freeze the block state
+   */
+  virtual void set_freeze_state(bool freeze) {
+    (void)freeze;  // Included to avoid unused parameter warning
   }
 };
 

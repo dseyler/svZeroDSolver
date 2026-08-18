@@ -255,6 +255,21 @@ class Model {
   void post_solve(Eigen::Matrix<double, Eigen::Dynamic, 1>& y);
 
   /**
+   * @brief Prepare all blocks for the upcoming driver step
+   *
+   * Must be called once per driver step, before the Newton loop, with the
+   * state converged at the end of the previous driver step. A driver step is
+   * one time step in a standalone simulation, or one external step (spanning
+   * several internal time steps) when coupled to an external solver.
+   *
+   * @param y_old Converged solution at the end of the previous driver step
+   * @param ydot_old Converged time-derivative at the end of the previous
+   * driver step
+   */
+  void prepare_step(const Eigen::Matrix<double, Eigen::Dynamic, 1>& y_old,
+                    const Eigen::Matrix<double, Eigen::Dynamic, 1>& ydot_old);
+
+  /**
    * @brief Convert the blocks to a steady behavior
    *
    */
